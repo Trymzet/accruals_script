@@ -23,7 +23,7 @@ def load_workbook(file_name, sheetname=None, skiprows=None):
 
 
 def load_all():
-    master_file_name = "WD_Accruals_Master.xlsx"
+    master_file_name = "WD_Accruals_Master.xlsm"
     accounts_sheet_name = "GL_accounts_by_category"
     ba_pc_sheet_name = "CC_to_BA_PC"
     JE_template_sheet_name = "FAST JE Template"
@@ -52,7 +52,7 @@ def initial_cleanup():
 
 
 def vlookup(what, left_on, right_on):
-    result = WD_report.merge(what, left_on=left_on , right_on=right_on, how="left")
+    result = WD_report.merge(what, left_on=left_on, right_on=right_on, how="left")
     return result
 
 
@@ -65,13 +65,6 @@ def run_vlookups():
     # the account number is provided separately for each country. However, all countries have the same account for a given category, so we need to remove these duplicate rows.
     # in case any country has a separate account for a given category in the future, the script will still work
     WD_report.drop_duplicates(inplace=True)
-
-
-    print(WD_report.shape[0], "After dropping duplicate accounts")
-
-    # TODO: check all the columns UP TO Acc# for duplicates - if they only differ in Acc#, it means the acc was different for the same category!
-    # TODO: there should be 22 such situations
-
     WD_report = vlookup(ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Legacy Cost Center"])
 
 
@@ -98,7 +91,14 @@ def final_cleanup():
     # note that this also overrides the above two exceptions, which are changed to the german account
     WD_report.loc[WD_report["Entity Code"] == "DESA", "Acc#"] = german_cost_account
     # ensure account number is an integer
+    WD_report["Acc#"] = WD_report["Acc#"].map(int)
+    # the accounts vlookup finds all possible accounts for a category, so this also needs to be filtered by subsidiary
+    duplicates = WD_report.duplicated(subset=["Expense Report", "Expense Item", "Net Amount LC"])
+    print(duplicates[duplicates == True].shape[0])
+    duplicates = WD_report[duplicates == True]
+    print(duplicates)
 
+    duplicates.to_csv("duplicates.xlsx")
 
 WD_report, accounts_file, ba_pc_file, JE_template = load_all()
 print("All files loaded :)")
@@ -106,6 +106,14 @@ initial_cleanup()
 print("Data cleaned :)")
 run_vlookups()
 final_cleanup()
+
+
+
+compare = pd.read_excel("compare.xlsx")
+compare["Acc#"] = compare["Acc#"].map(int)
+d = {"WD_report": WD_report.astype(str), "compare": compare.astype(str)}
+df = pd.concat(d)
+df.drop_duplicates(keep=False, inplace=True)
 
 
 # TODO: if the account / profit center / ba is not found, add those lines to a "not found" file for a manual check
@@ -118,4 +126,5 @@ temp = "C:/Users/zawadzmi/Desktop/WD MEC 08.17/Script/Result/" + WD_report_name
 with pd.ExcelWriter(temp) as writer:
     WD_report.to_excel(writer, engine="openpyxl", index=False)
 
-WD_report.to_csv("Prepared.csv")
+with pd.ExcelWriter("concatenated.xlsx") as writer:
+    df.to_excel(writer, engine="openpyxl", index=False)
