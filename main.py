@@ -43,7 +43,7 @@ def generate_vbs_script():
         f.write(vbscript.encode("utf-8"))
 
 
-def load_csv(excel_file_name, has_sheets=False, skiprows=None):
+def load_csv(excel_file_name, has_sheets=False, skiprows=None, usecols=None):
     if has_sheets:
         # sheet numbers to use; using the first three, hence the fixed numbers; fifth sheet in Master file is the template,
         # which has to be parsed as xlsx
@@ -52,7 +52,7 @@ def load_csv(excel_file_name, has_sheets=False, skiprows=None):
         for sheet in sheets:
             csv_file_name = "../Script/{}{}".format(sheet, ".csv")
             call(["cscript.exe", "../Script/ExcelToCsv.vbs", excel_file_name, csv_file_name, sheet, r"//B"])
-            sheet_dataframe = pd.read_csv(csv_file_name, encoding="latin-1")
+            sheet_dataframe = pd.read_csv(csv_file_name, encoding="latin-1", engine="c", usecols=usecols)
             sheet_dataframes.append(sheet_dataframe)
         return tuple(sheet_dataframes)
     else:
@@ -61,12 +61,13 @@ def load_csv(excel_file_name, has_sheets=False, skiprows=None):
         call(["cscript.exe", "../Script/ExcelToCsv.vbs", excel_file_name, csv_file_name, str(1), r"//B"])
         if skiprows:
             try:
-                data = pd.read_csv(csv_file_name, skiprows=skiprows, encoding="latin-1")
+                data = pd.read_csv(csv_file_name, skiprows=skiprows, encoding="latin-1", engine="c", usecols=usecols)
+
             except:
                 print("Something went wrong... make sure report names weren't changed or debug the load_csv function")
         else:
             try:
-                data = pd.read_csv(csv_file_name, encoding="latin-1")
+                    data = pd.read_csv(csv_file_name, encoding="latin-1", engine="c", usecols=usecols)
             except:
                 print("Something went wrong... make sure report names weren't changed or debug the load_csv function")
         return data
@@ -95,18 +96,22 @@ def load_all():
     master_file_name = "WD_Accruals_Master.xlsm"
     file_names = [WD_report_name, WD2_report_name, master_file_name]
     dataframes = []
+    WD1_required_cols = ["Entity Code", "Cost Center", "Expense Report Number", "Expense Item", "Net Amount LC"]
+    WD2_required_cols = ["Billing Amount", "Currency", "Report Cost Location"]
+    accounts_required_cols = ["Expense Item name", "Subsidiary", "Acc#"]  # TODO
 
     # this will be used by each load_csv() call to convert every .xlsx to .csv for faster loading
     generate_vbs_script()
 
     for file_name in file_names:
         if file_name == WD_report_name:
-            df = load_csv(file_name, skiprows=[0])
+            df = load_csv(file_name, skiprows=[0], usecols=WD1_required_cols)
         elif file_name == WD2_report_name:
-            df = load_csv(file_name)
+            df = load_csv(file_name, usecols=WD2_required_cols)
         else:
-            sheet1, sheet2, sheet3 = load_csv(file_name, has_sheets=True)
-            dataframes.extend([sheet1, sheet2, sheet3])
+            # rewrite for accounts_sheet -> usecols
+            cc_to_ba, accounts, JE_template = load_csv(file_name, has_sheets=True)
+            dataframes.extend([cc_to_ba, accounts, JE_template])
             return dataframes
         dataframes.append(df)
     return dataframes
@@ -116,9 +121,20 @@ def initial_cleanup():
     global WD_report, WD2_report
     # no longer needed
     remove("ExcelToCsv.vbs")
-    # remove rows with total amount 0 or less
+    # remove rows with total amount 0 or less / unfortunately, pandas nor Python are able to convert amounts in the format:
+    # 123,456.00 to float, hence need to either use localization (bad idea as the process is WW), or use below workaround
+    try:
+        WD_report["Net Amount LC"] = WD_report["Net Amount LC"].apply(lambda x: x.replace(",", "") if type(x) != float else x)
+    except:
+        pass
+    WD_report["Net Amount LC"] = WD_report["Net Amount LC"].map(float)
     WD_report = WD_report[WD_report["Net Amount LC"] > 0]
-    WD2_report = WD2_report[WD2_report["Billing Amount"] > 0]
+    try:
+        WD2_report["Billing Amount"] = WD2_report["Billing Amount"].apply(lambda x: x.replace(",", "") if type(x) != float else x)
+    except:
+        pass
+    WD2_report = WD2_report[WD2_report["Billing Amount"].apply(lambda x: "(" not in x)]
+    WD2_report["Billing Amount"] = WD2_report["Billing Amount"].map(float)
     # delete any rows that don't have a cost center specified
     WD_report.dropna(subset=["Cost Center"], inplace=True)
     WD2_report.dropna(subset=["Report Cost Location"], inplace=True)
@@ -127,8 +143,8 @@ def initial_cleanup():
     WD2_report["Report Cost Location"] = WD2_report["Report Cost Location"].astype("str").map(lambda x: x.split()[0])
 
 
-def vlookup(what, left_on, right_on):
-    result = WD_report.merge(what, left_on=left_on, right_on=right_on, how="left")
+def vlookup(report, what, left_on, right_on):
+    result = report.merge(what, left_on=left_on, right_on=right_on, how="left")
     return result
 
 
@@ -137,13 +153,12 @@ def run_vlookups():
     accounts = pd.DataFrame(accounts_file["Acc#"]).astype(int)
     ba_pc_to_join = ba_pc_file[["Business Area", "HPE Profit Center"]]
 
-    WD_report = vlookup(accounts, WD_report["Expense Item"], accounts_file["Expense Item name"])
+    WD_report = vlookup(WD_report, accounts, WD_report["Expense Item"], accounts_file["Expense Item name"])
     # the account number is provided separately for each country. However, all countries have the same account for a given category, so we need to remove these duplicate rows.
     # in case any country has a separate account for a given category in the future, the script will still work
     WD_report.drop_duplicates(inplace=True)
-    WD_report = vlookup(ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Legacy Cost Center"])
-    WD2_report = vlookup(ba_pc_to_join, WD2_report["Report Cost Location"], ba_pc_file["Legacy Cost Center"])
-    print(WD2_report.head())
+    WD_report = vlookup(WD_report, ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Legacy Cost Center"])
+    WD2_report = vlookup(WD2_report, ba_pc_to_join, WD2_report["Report Cost Location"], ba_pc_file["Legacy Cost Center"])
 
 
 def final_cleanup():
@@ -171,10 +186,10 @@ def final_cleanup():
     # ensure account number is an integer
     WD_report["Acc#"] = WD_report["Acc#"].map(int)
     # the accounts vlookup finds all possible accounts for a category, so this also needs to be filtered by subsidiary
-    duplicates = WD_report.duplicated(subset=["Expense Report", "Expense Item", "Net Amount LC"])
+    duplicates = WD_report.duplicated(subset=["Expense Report Number", "Expense Item", "Net Amount LC"])
     print(duplicates[duplicates == True].shape[0])
     duplicates = WD_report[duplicates == True]
-    print(duplicates)
+    #print(duplicates)
 
     duplicates.to_csv("duplicates.xlsx")
 
