@@ -98,7 +98,7 @@ def load_all():
     dataframes = []
     WD1_required_cols = ["Entity Code", "Cost Center", "Expense Report Number", "Expense Item", "Net Amount LC"]
     WD2_required_cols = ["Billing Amount", "Currency", "Report Cost Location"]
-    accounts_required_cols = ["Expense Item name", "Subsidiary", "Acc#"]  # TODO
+    # accounts_required_cols = ["Expense Item name", "Subsidiary", "Acc#"]  # TODO
 
     # this will be used by each load_csv() call to convert every .xlsx to .csv for faster loading
     generate_vbs_script()
@@ -117,10 +117,21 @@ def load_all():
     return dataframes
 
 
+def collect_garbage():
+    # remove no longer needed files
+    WD_report_byproduct = "{}{}".format(WD_report_name[:-5], ".csv")
+    WD2_report_byproduct = "{}{}".format(WD2_report_name[:-5], ".csv")
+    excel_to_csv_macro_byproducts = ["1.csv", "2.csv", "3.csv", WD_report_byproduct, WD2_report_byproduct]
+    for byproduct in excel_to_csv_macro_byproducts:
+        remove(byproduct)
+    remove("ExcelToCsv.vbs")
+
+
 def initial_cleanup():
     global WD_report, WD2_report
-    # no longer needed
-    remove("ExcelToCsv.vbs")
+
+    collect_garbage()
+
     # remove rows with total amount 0 or less / unfortunately, pandas nor Python are able to convert amounts in the format:
     # 123,456.00 to float, hence need to either use localization (bad idea as the process is WW), or use below workaround
     try:
@@ -151,14 +162,14 @@ def vlookup(report, what, left_on, right_on):
 def run_vlookups():
     global WD_report, WD2_report
     accounts = pd.DataFrame(accounts_file["Acc#"]).astype(int)
-    ba_pc_to_join = ba_pc_file[["Business Area", "HPE Profit Center"]]
+    ba_pc_to_join = ba_pc_file[["Business Area", "Profit Center", "MRU", "Functional Area"]]
 
     WD_report = vlookup(WD_report, accounts, WD_report["Expense Item"], accounts_file["Expense Item name"])
     # the account number is provided separately for each country. However, all countries have the same account for a given category, so we need to remove these duplicate rows.
     # in case any country has a separate account for a given category in the future, the script will still work
     WD_report.drop_duplicates(inplace=True)
-    WD_report = vlookup(WD_report, ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Legacy Cost Center"])
-    WD2_report = vlookup(WD2_report, ba_pc_to_join, WD2_report["Report Cost Location"], ba_pc_file["Legacy Cost Center"])
+    WD_report = vlookup(WD_report, ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Cost Center"])
+    WD2_report = vlookup(WD2_report, ba_pc_to_join, WD2_report["Report Cost Location"], ba_pc_file["Cost Center"])
 
 
 def final_cleanup():
@@ -213,7 +224,7 @@ df.drop_duplicates(keep=False, inplace=True)
 # TODO: if the account / profit center / ba is not found, add those lines to a "not found" file for a manual check
 
 
-WD_report["Checksum"] = WD_report["HPE Profit Center"].astype(str) + WD_report["Business Area"]
+WD_report["Checksum"] = WD_report["Profit Center"].astype(str) + WD_report["Business Area"]
 
 temp = "C:/Users/zawadzmi/Desktop/WD MEC 08.17/Script/Result/" + WD_report_name
 
