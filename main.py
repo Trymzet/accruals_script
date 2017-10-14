@@ -38,9 +38,11 @@ def generate_vbs_script():
     oBook.Close False
     oExcel.Quit
     """
-
-    with open("ExcelToCsv.vbs", "wb") as f:
-        f.write(vbscript.encode("utf-8"))
+    try:
+        with open("ExcelToCsv.vbs", "wb") as f:
+            f.write(vbscript.encode("utf-8"))
+    except:
+        print("VBS script for converting xlsx files to csv could not be generated.")
 
 
 def load_csv(excel_file_name, has_sheets=False, skiprows=None, usecols=None):
@@ -52,7 +54,10 @@ def load_csv(excel_file_name, has_sheets=False, skiprows=None, usecols=None):
         for sheet in sheets:
             csv_file_name = "../Script/{}{}".format(sheet, ".csv")
             call(["cscript.exe", "../Script/ExcelToCsv.vbs", excel_file_name, csv_file_name, sheet, r"//B"])
-            sheet_dataframe = pd.read_csv(csv_file_name, encoding="latin-1", engine="c", usecols=usecols)
+            try:
+                sheet_dataframe = pd.read_csv(csv_file_name, encoding="latin-1", engine="c", usecols=usecols)
+            except:
+                print("Sheets could not be converted to CSV format.")
             sheet_dataframes.append(sheet_dataframe)
         return tuple(sheet_dataframes)
     else:
@@ -73,6 +78,7 @@ def load_csv(excel_file_name, has_sheets=False, skiprows=None, usecols=None):
         return data
 
 
+"""
 def load_workbook(file_name, sheetname=None, skiprows=None):
     if skiprows:
         try:
@@ -90,6 +96,7 @@ def load_workbook(file_name, sheetname=None, skiprows=None):
         except:
             print("File {} not found in current directory.".format(file_name))
     return wb
+"""
 
 
 def load_all():
@@ -128,6 +135,9 @@ def collect_garbage():
 
 
 def initial_cleanup():
+
+    # TODO: deal with scientific-notation-like business areas converting to sci-notation
+
     global WD_report, WD2_report
 
     collect_garbage()
@@ -162,14 +172,14 @@ def vlookup(report, what, left_on, right_on):
 def run_vlookups():
     global WD_report, WD2_report
     accounts = pd.DataFrame(accounts_file["Acc#"]).astype(int)
-    ba_pc_to_join = ba_pc_file[["Business Area", "Profit Center", "MRU", "Functional Area"]]
+    master_data_to_join = master_data_file[["Business Area", "Profit Center", "MRU", "Functional Area"]]
 
     WD_report = vlookup(WD_report, accounts, WD_report["Expense Item"], accounts_file["Expense Item name"])
     # the account number is provided separately for each country. However, all countries have the same account for a given category, so we need to remove these duplicate rows.
     # in case any country has a separate account for a given category in the future, the script will still work
     WD_report.drop_duplicates(inplace=True)
-    WD_report = vlookup(WD_report, ba_pc_to_join, WD_report["Cost Center"], ba_pc_file["Cost Center"])
-    WD2_report = vlookup(WD2_report, ba_pc_to_join, WD2_report["Report Cost Location"], ba_pc_file["Cost Center"])
+    WD_report = vlookup(WD_report, master_data_to_join, WD_report["Cost Center"], master_data_file["Cost Center"])
+    WD2_report = vlookup(WD2_report, master_data_to_join, WD2_report["Report Cost Location"], master_data_file["Cost Center"])
 
 
 def final_cleanup():
@@ -196,29 +206,27 @@ def final_cleanup():
     WD_report.loc[WD_report["Entity Code"] == "DESA", "Acc#"] = german_cost_account
     # ensure account number is an integer
     WD_report["Acc#"] = WD_report["Acc#"].map(int)
+
+
     # the accounts vlookup finds all possible accounts for a category, so this also needs to be filtered by subsidiary
     duplicates = WD_report.duplicated(subset=["Expense Report Number", "Expense Item", "Net Amount LC"])
-    print(duplicates[duplicates == True].shape[0])
-    duplicates = WD_report[duplicates == True]
-    #print(duplicates)
+    print(duplicates[duplicates].shape[0])
+    duplicates = WD_report[duplicates]
+    duplicates.to_csv("duplicates.csv")
 
-    duplicates.to_csv("duplicates.xlsx")
+    WD_report.drop_duplicates(subset=["Expense Report Number", "Expense Item", "Net Amount LC"], inplace=True)
+"""
+    temp = WD_report
+    temp.drop_duplicates(subset=["Expense Report Number", "Expense Item", "Net Amount LC"], inplace=True)
+    temp.to_csv("temp.csv")
+"""
 
-
-WD_report, WD2_report, ba_pc_file, accounts_file, JE_template_file = load_all()
+WD_report, WD2_report, master_data_file, accounts_file, JE_template_file = load_all()
 print("All files loaded :)")
 initial_cleanup()
 print("Data cleaned :)")
 run_vlookups()
 final_cleanup()
-
-
-
-compare = pd.read_excel("compare.xlsx")
-compare["Acc#"] = compare["Acc#"].map(int)
-d = {"WD_report": WD_report.astype(str), "compare": compare.astype(str)}
-df = pd.concat(d)
-df.drop_duplicates(keep=False, inplace=True)
 
 
 # TODO: if the account / profit center / ba is not found, add those lines to a "not found" file for a manual check
@@ -230,6 +238,7 @@ temp = "C:/Users/zawadzmi/Desktop/WD MEC 08.17/Script/Result/" + WD_report_name
 
 with pd.ExcelWriter(temp) as writer:
     WD_report.to_excel(writer, engine="openpyxl", index=False)
-
+""""
 with pd.ExcelWriter("concatenated.xlsx") as writer:
     df.to_excel(writer, engine="openpyxl", index=False)
+"""

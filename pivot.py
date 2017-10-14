@@ -15,7 +15,9 @@ def generate_csv(cc):  # cc = Company Code
 
 # TODO: NEED TO ADD ADDITIONAL GRUPBY - FA or MRU?
     cur_group_start_row = 0
+
     for checksum, g in grouped_by_checksum:
+        print(g)
         business_area = checksum[-4:]  # BA is the last 4 chars of checksum
         profit_center = checksum[:5]  # PC is the first 5 chars of checksum
         general_description = "WD {} ACCRUALS {} FY{}".format(cc, posting_month, posting_year)
@@ -31,7 +33,15 @@ def generate_csv(cc):  # cc = Company Code
             JE_csv.loc[i, "SUBSIDIARY"] = cc
             JE_csv.loc[i, "MEMO"] = general_description
             JE_csv.loc[i, "REVERSAL DATE"] = first_day_of_current_month
+            JE_csv.loc[i, "MRU"] = g.iloc[i - cur_group_start_row]["MRU"]
+            JE_csv.loc[i, "FUNCTIONAL AREA"] = g.iloc[i - cur_group_start_row]["Functional Area"]
 
+        # TODO: calculate current JE's total in USD by using OANDA's API -- write get_oanda_exchange_rate(cc)
+        # cur_ccs_exchange_rate = get_oanda_exchange_rate(cc)
+        # JE_csv_sum_USD = JE_csv_sum * cur_ccs_exchange_rate
+        # if JE_csv_sum_USD < 5000:
+        #    print("Total amount of accruals for {} is lower than 5000 USD, hence not generating JE".format(cc))
+        #    return
 
         # here we're filling out the AP account row
         last_group_start_row = cur_group_start_row
@@ -39,10 +49,8 @@ def generate_csv(cc):  # cc = Company Code
         JE_csv.loc[cur_group_start_row, "ACCOUNT"] = 25702400
         JE_csv.loc[cur_group_start_row, "CREDIT"] = JE_csv.loc[last_group_start_row:cur_group_start_row, "DEBIT"].sum()
         JE_csv.loc[cur_group_start_row, "LINE MEMO"] = general_description
-        JE_csv.loc[cur_group_start_row, "MRU"] = MRU
         JE_csv.loc[cur_group_start_row, "BUSINESS AREA"] = business_area
         JE_csv.loc[cur_group_start_row, "PROFIT CENTER"] = profit_center
-        JE_csv.loc[cur_group_start_row, "FUNCTIONAL AREA"] = functional_area
         JE_csv.loc[cur_group_start_row, "DATE"] = last_day_of_previous_month.strftime("%m/%d/%Y")
         JE_csv.loc[cur_group_start_row, "POSTING PERIOD"] = posting_period
         JE_csv.loc[cur_group_start_row, "SUBSIDIARY"] = cc
@@ -50,7 +58,7 @@ def generate_csv(cc):  # cc = Company Code
         JE_csv.loc[cur_group_start_row, "REVERSAL DATE"] = first_day_of_current_month
         cur_group_start_row += 1
 
-
+        # TODO: final result should be grouped by sum per report no, not per account -> delete below code
         cur_checksum_data = g
         grouped_by_acc = cur_checksum_data.groupby(["Expense Report Number", "Acc#"])
         report_sum_by_acc = grouped_by_acc.sum()
@@ -66,11 +74,12 @@ def generate_csv(cc):  # cc = Company Code
             #print(grup)
 
     JE_csv.to_csv(CSV_file_name, index=False)
-    #print("{} CSV file generated :)".format(cc))
+    print("{} CSV file generated :)".format(cc))
 
 
-clean = pd.read_excel("clean.xlsx")
-template_data = clean[["Entity Code", "Checksum", "Acc#", "Expense Report Number", "Net Amount LC"]]
+# clean = pd.read_excel("clean.xlsx") tested, works
+clean = pd.read_excel("C:/Users/zawadzmi/Desktop/WD MEC 08.17/Script/Result/" + "EXP031-RPT-Process-Accruals_with_Expense_Report.xlsx")
+template_data = clean[["Entity Code", "Checksum", "Acc#", "Expense Report Number", "Net Amount LC", "MRU", "Functional Area"]]
 grouped_by_cc = template_data.groupby("Entity Code", as_index=False)
 
 JE_csv_columns = ["ACCOUNT", "DEBIT", "CREDIT", "TAX CODE", "LINE MEMO", "MRU", "BUSINESS AREA", "PROFIT CENTER", "FUNCTIONAL AREA",
