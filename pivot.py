@@ -1,5 +1,44 @@
 import pandas as pd
 import openpyxl as oxl
+import numpy as np
+from urllib.request import urlopen
+from json import loads
+
+# TODO: delete below line
+WD_report_name = "EXP031-RPT-Process-Accruals_with_Expense_Report.xlsx"
+
+
+def generate_exchange_rates():
+    # https://openexchangerates.org
+    exchange_rates_api_key = "11f20df062814531be891cc0173702a6"
+    api_call = f"https://openexchangerates.org/api/latest.json?app_id={exchange_rates_api_key}"
+    rates_api_response = urlopen(api_call)
+    rates_api_response_str = rates_api_response.read().decode("ascii")
+    rates_api_response_dict = loads(rates_api_response_str)
+    rates = rates_api_response_dict["rates"]
+
+    # feel free to update company codes/currencies
+    currencies_in_scope = {"AUSA": "AUD", "BESA": "EUR", "BGSA": "BGN", "BRSA": "BRL", "CASA": "CAD", "CHSD": "CHF", "CNSA": "CNY",
+                           "CRSB": "CRC", "CZSA": "CZK", "DESA": "EUR", "DKSA": "DKK", "ESSA": "EUR", "FRSA": "EUR", "GBF0": "USD",
+                           "GBSA": "GBP", "IESA": "EUR", "IESB": "EUR", "ILSA": "ILS", "ILSB": "ILS", "INSA": "INR", "INSB": "INR",
+                           "INSD": "INR", "ITSA": "EUR", "JPSA": "JPY", "LUSB": "EUR", "MXSC": "MXN", "NLSC": "EUR", "PHSB": "PHP",
+                           "PLSA": "PLN", "PRSA": "PYG", "ROSA": "RON", "RUSA": "RUB", "SESA": "SEK", "TRSA": "TRY", "USMS": "USD",
+                           "USSM": "USD", "USSN": "USD"}
+
+    exchange_rates_to_usd = {}
+    for company_code in currencies_in_scope:
+        currency = currencies_in_scope[company_code]
+        # the rates from API are from USD to x; we need from x to USD
+        try:
+            exchange_rate_to_usd = 1/rates[currency]
+        except:
+            continue
+        if company_code in exchange_rates_to_usd:
+            continue
+        else:
+            exchange_rates_to_usd[company_code] = exchange_rate_to_usd
+    return exchange_rates_to_usd
+
 
 
 def generate_csv(cc):  # cc = Company Code
@@ -11,13 +50,10 @@ def generate_csv(cc):  # cc = Company Code
     posting_month = last_day_of_previous_month.strftime("%b")
     posting_year = last_day_of_previous_month.strftime("%Y")
     posting_period = "{} {}".format(posting_month, posting_year)
-
-
-# TODO: NEED TO ADD ADDITIONAL GRUPBY - FA or MRU?
+    # this is a way to track row number, so that groups can be input to consecutive rows
     cur_group_start_row = 0
 
     for checksum, g in grouped_by_checksum:
-        print(g)
         business_area = checksum[-4:]  # BA is the last 4 chars of checksum
         profit_center = checksum[:5]  # PC is the first 5 chars of checksum
         general_description = "WD {} ACCRUALS {} FY{}".format(cc, posting_month, posting_year)
@@ -36,13 +72,6 @@ def generate_csv(cc):  # cc = Company Code
             JE_csv.loc[i, "MRU"] = g.iloc[i - cur_group_start_row]["MRU"]
             JE_csv.loc[i, "FUNCTIONAL AREA"] = g.iloc[i - cur_group_start_row]["Functional Area"]
 
-        # TODO: calculate current JE's total in USD by using OANDA's API -- write get_oanda_exchange_rate(cc)
-        # cur_ccs_exchange_rate = get_oanda_exchange_rate(cc)
-        # JE_csv_sum_USD = JE_csv_sum * cur_ccs_exchange_rate
-        # if JE_csv_sum_USD < 5000:
-        #    print("Total amount of accruals for {} is lower than 5000 USD, hence not generating JE".format(cc))
-        #    return
-
         # here we're filling out the AP account row
         last_group_start_row = cur_group_start_row
         cur_group_start_row += len(g)
@@ -58,29 +87,27 @@ def generate_csv(cc):  # cc = Company Code
         JE_csv.loc[cur_group_start_row, "REVERSAL DATE"] = first_day_of_current_month
         cur_group_start_row += 1
 
-        # TODO: final result should be grouped by sum per report no, not per account -> delete below code
-        cur_checksum_data = g
-        grouped_by_acc = cur_checksum_data.groupby(["Expense Report Number", "Acc#"])
-        report_sum_by_acc = grouped_by_acc.sum()
+        # TODO: final result should be grouped by sum per report number
+        # cur_checksum_data = g
+        # grouped_by_expense_report = cur_checksum_data.groupby(["Expense Report Number"])
+        # report_sum_by_expense_report = grouped_by_expense_report.sum()
 
-        #print(report_sum_by_acc)
+    JE_amount_local = JE_csv["CREDIT"].sum(skipna=True)
+    exchange_rates = generate_exchange_rates()
+    amount_in_usd =  JE_amount_local * exchange_rates[cc]
+    to_generate = []
 
-        # use merge to vlookup final sum per account number -
-        # 1. Generate a DataFrame from report_sum_by_acc
-        # 2. JE_csv.merge(report_sum_by_acc["Net Amount LC"], left_on="Expense Report Number", right_on= "Expense Report Number"
+    # company requirement
+    if amount_in_usd > 5000:
+        to_generate.append(cc)
 
-        #for kee, grup in grouped_by_acc:
-            #print(kee)
-            #print(grup)
+    if cc in to_generate:
+        JE_csv.to_csv(CSV_file_name, index=False)
+        print("{} CSV file generated :)".format(cc))
 
-    JE_csv.to_csv(CSV_file_name, index=False)
-    print("{} CSV file generated :)".format(cc))
-
-
-# clean = pd.read_excel("clean.xlsx") tested, works
-clean = pd.read_excel("C:/Users/zawadzmi/Desktop/WD MEC 08.17/Script/Result/" + "EXP031-RPT-Process-Accruals_with_Expense_Report.xlsx")
-template_data = clean[["Entity Code", "Checksum", "Acc#", "Expense Report Number", "Net Amount LC", "MRU", "Functional Area"]]
-grouped_by_cc = template_data.groupby("Entity Code", as_index=False)
+preprocessed_WD_report = pd.read_excel("../Script/Result/{}".format(WD_report_name))
+WD_report_groupby_input = preprocessed_WD_report[["Entity Code", "Checksum", "Acc#", "Expense Report Number", "Net Amount LC", "MRU", "Functional Area"]]
+grouped_by_cc = WD_report_groupby_input.groupby("Entity Code", as_index=False)
 
 JE_csv_columns = ["ACCOUNT", "DEBIT", "CREDIT", "TAX CODE", "LINE MEMO", "MRU", "BUSINESS AREA", "PROFIT CENTER", "FUNCTIONAL AREA",
                   "DATE", "POSTING PERIOD", "ACCOUNTING BOOK", "SUBSIDIARY", "CURRENCY", "MEMO", "REVERSAL DATE", "TO SUBSIDIARY",
@@ -93,6 +120,3 @@ JE_template_sheet_name = "Document Template"
 for key, group in grouped_by_cc:
     company_code = key
     generate_csv(company_code)
-
-
-
